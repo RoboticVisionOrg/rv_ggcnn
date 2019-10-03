@@ -1,0 +1,6 @@
+<?xml version="1.0" ?>
+<launch>
+  <node pkg="rv_ggcnn" type="ggcnn" name="ggcnn">
+    <rosparam command="load" file="$(find rv_ggcnn)/config/config.yaml" /> 
+  </node>
+</launch>
