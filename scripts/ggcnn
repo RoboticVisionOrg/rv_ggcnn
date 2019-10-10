@@ -13,7 +13,7 @@ import numpy as np
 from cloudvis.msg import Property
 
 from cloudvis.srv import Get, GetRequest
-from qut_msgs.srv import GetGraspPose, GetGraspPoseResponse
+from rv_msgs.srv import GetGraspPose, GetGraspPoseResponse
 
 from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import Pose, PoseStamped, Quaternion
