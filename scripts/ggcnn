@@ -90,7 +90,7 @@ class CloudvisGGCNN(object):
     depth_crop, _ = process_depth_image(depth, self.img_crop_size, 300, return_mask=True, crop_y_offset=self.img_crop_y_offset)
     mask_crop = process_depth_mask(mask, self.img_crop_size, 300, crop_y_offset=self.img_crop_y_offset)
     
-    camera_pose = self._current_robot_pose(self.base_frame, self.camera_frame)
+    camera_pose = self._current_robot_pose(self.base_frame, request.camera_info.header.frame_id)
     camera_rot = transformations.quaternion_matrix(self._quaternion_to_list(camera_pose.orientation))[0:3, 0:3]
     cam_p = camera_pose.position
 
@@ -121,7 +121,12 @@ class CloudvisGGCNN(object):
     width_m = width_img / 300.0 * 2.0 * depth_crop * np.tan(self.cam_fov * self.img_crop_size/depth.shape[0] / 2.0 / 180.0 * np.pi)
     
     masked_data = cv2.bitwise_and(points, points, mask=mask_crop)
-    
+    # cv2.imshow('Mask', mask)
+    # cv2.imshow('Mask Cropped', mask_crop)
+    # cv2.imshow('Masked data', masked_data)
+    # cv2.imshow('points', points)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
     best_g = np.argmax(masked_data)
     best_g_unr = np.unravel_index(best_g, points.shape)
 
