@@ -27,7 +27,7 @@ def process_depth_mask(depth, crop_size, out_size=300, crop_y_offset=0):
   depth_crop = depth[(imh - crop_size) // 2 - crop_y_offset:(imh - crop_size) // 2 + crop_size - crop_y_offset,
                       (imw - crop_size) // 2:(imw - crop_size) // 2 + crop_size]
 
-  depth_crop = cv2.resize(depth_crop, (out_size, out_size), cv2.INTER_AREA)
+  depth_crop = cv2.resize(depth_crop.astype(np.float32), (out_size, out_size), cv2.INTER_AREA).astype(np.uint8)
 
   return depth_crop
 
@@ -92,14 +92,14 @@ class CloudvisGGCNN(object):
 
     depth_crop, _ = process_depth_image(depth, self.img_crop_size, 300, return_mask=True, crop_y_offset=self.img_crop_y_offset)
     
-    camera_pose = self._current_robot_pose(self.base_frame, request.camera_info.header.frame_id)
+    camera_pose = self._current_robot_pose(self.base_frame, observation.depth_info.header.frame_id)
     camera_rot = transformations.quaternion_matrix(self._quaternion_to_list(camera_pose.orientation))[0:3, 0:3]
     cam_p = camera_pose.position
 
     req = GetRequest()
     req.service_name = 'ggcnn'
 
-    req.properties.append(Property(name='image', image=request.depth))
+    req.properties.append(Property(name='image', image=observation.depth_image))
 
     response = proxy(req)
 
@@ -125,13 +125,12 @@ class CloudvisGGCNN(object):
     # Insert a whole-image detection if none provided
     if len(observation.detections) == 0:
       observation.detections.append(Detection(
-        width=depth.width,
-        height=depth.height,
-        cropped_mask=np.ones(shape=depth.shape, dtype=int)
+        width=depth.shape[1],
+        height=depth.shape[0],
+        cropped_mask=self.bridge.cv2_to_imgmsg(np.ones(shape=depth.shape, dtype=np.uint8), encoding='passthrough')
       ))
     
     for detection in observation.detections:
-      # Construct mask from cropped mask provided by detection
       cropped = self.bridge.imgmsg_to_cv2(detection.cropped_mask, desired_encoding="passthrough")
 
       mask = np.zeros(shape=depth.shape, dtype=int)
@@ -139,6 +138,7 @@ class CloudvisGGCNN(object):
         detection.y_top:detection.y_top+cropped.shape[0], 
         detection.x_left:detection.x_left+cropped.shape[1]
       ] = cropped
+      
       mask_crop = process_depth_mask(mask, self.img_crop_size, 300, crop_y_offset=self.img_crop_y_offset)
 
       # Generate masked heat map
