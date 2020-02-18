@@ -15,6 +15,8 @@ from cloudvis.msg import Property
 from cloudvis.srv import Get, GetRequest
 from rv_msgs.srv import GetGraspPose, GetGraspPoseResponse
 
+from rv_msgs.msg import Detection
+
 from sensor_msgs.msg import Image, CameraInfo
 from geometry_msgs.msg import Pose, PoseStamped, Quaternion
 
@@ -82,13 +84,13 @@ class CloudvisGGCNN(object):
     proxy = rospy.ServiceProxy('cloudvis', Get)
     proxy.wait_for_service()
 
-    cam_K = np.array(request.camera_info.K).reshape((3, 3))
+    observation = request.observation
 
-    depth = self.bridge.imgmsg_to_cv2(request.depth, desired_encoding="passthrough")
-    mask = self.bridge.imgmsg_to_cv2(request.mask, desired_encoding="passthrough")
+    cam_K = np.array(observation.depth_info.K).reshape((3, 3))
+
+    depth = self.bridge.imgmsg_to_cv2(observation.depth_image, desired_encoding="passthrough")
 
     depth_crop, _ = process_depth_image(depth, self.img_crop_size, 300, return_mask=True, crop_y_offset=self.img_crop_y_offset)
-    mask_crop = process_depth_mask(mask, self.img_crop_size, 300, crop_y_offset=self.img_crop_y_offset)
     
     camera_pose = self._current_robot_pose(self.base_frame, request.camera_info.header.frame_id)
     camera_rot = transformations.quaternion_matrix(self._quaternion_to_list(camera_pose.orientation))[0:3, 0:3]
@@ -120,26 +122,41 @@ class CloudvisGGCNN(object):
 
     width_m = width_img / 300.0 * 2.0 * depth_crop * np.tan(self.cam_fov * self.img_crop_size/depth.shape[0] / 2.0 / 180.0 * np.pi)
     
-    masked_data = cv2.bitwise_and(points, points, mask=mask_crop)
-    # cv2.imshow('Mask', mask)
-    # cv2.imshow('Mask Cropped', mask_crop)
-    # cv2.imshow('Masked data', masked_data)
-    # cv2.imshow('points', points)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
-    best_g = np.argmax(masked_data)
-    best_g_unr = np.unravel_index(best_g, points.shape)
+    # Insert a whole-image detection if none provided
+    if len(observation.detections) == 0:
+      observation.detections.append(Detection(
+        width=depth.width,
+        height=depth.height,
+        cropped_mask=np.ones(shape=depth.shape, dtype=int)
+      ))
+    
+    for detection in observation.detections:
+      # Construct mask from cropped mask provided by detection
+      cropped = self.bridge.imgmsg_to_cv2(detection.cropped_mask, desired_encoding="passthrough")
 
-    result = GetGraspPoseResponse()
-    result.grasp_pose.header.frame_id = self.base_frame
-    result.grasp_pose.pose.position.x = pos[best_g, 0]
-    result.grasp_pose.pose.position.y = pos[best_g, 1]
-    result.grasp_pose.pose.position.z = pos[best_g, 2]
-    result.grasp_pose.pose.orientation = self._list_to_quaternion(transformations.quaternion_from_euler(np.pi, 0, angle[best_g_unr] - np.pi/2))
-    result.width = width_m[best_g_unr]
-    result.quality = points[best_g_unr]
+      mask = np.zeros(shape=depth.shape, dtype=int)
+      mask[
+        detection.y_top:detection.y_top+cropped.shape[0], 
+        detection.x_left:detection.x_left+cropped.shape[1]
+      ] = cropped
+      mask_crop = process_depth_mask(mask, self.img_crop_size, 300, crop_y_offset=self.img_crop_y_offset)
 
-    return result
+      # Generate masked heat map
+      masked_data = cv2.bitwise_and(points, points, mask=mask_crop)
+
+      # Sample grasp pose from heat map
+      best_g = np.argmax(masked_data)
+      best_g_unr = np.unravel_index(best_g, points.shape)
+
+      detection.grasp_pose.header.frame_id = self.base_frame
+      detection.grasp_pose.pose.position.x = pos[best_g, 0]
+      detection.grasp_pose.pose.position.y = pos[best_g, 1]
+      detection.grasp_pose.pose.position.z = pos[best_g, 2]
+      detection.grasp_pose.pose.orientation = self._list_to_quaternion(transformations.quaternion_from_euler(np.pi, 0, angle[best_g_unr] - np.pi/2))
+      detection.grasp_width = width_m[best_g_unr]
+      detection.grasp_quality = points[best_g_unr]
+
+    return GetGraspPoseResponse(result=observation)
 
   def _quaternion_to_list(self, quaternion):
       return [quaternion.x, quaternion.y, quaternion.z, quaternion.w]
